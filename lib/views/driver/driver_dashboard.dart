@@ -311,7 +311,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 // 💡 এখানে direction পাস হচ্ছে ব্যাকএন্ডের জন্য
                 onPressed: () => _handleStartTrip(busId, routeId, direction),
                 child: Text(
-                  direction == 'up' ? 'Up ট্রিপ শুরু করুন 🚀' : 'Down ট্রিপ শুরু করুন 🏁',
+                  direction == 'up' ? 'Up ট্রিপ শুরু করুন' : 'Down ট্রিপ শুরু করুন',
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                 ),
               ),
