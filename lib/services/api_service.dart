@@ -60,12 +60,7 @@ class ApiService {
   }
 
   // ২. প্যাসেঞ্জার রেজিস্ট্রেশন মেথড
-  Future<Map<String, dynamic>> registerPassenger({
-    required String name,
-    required String email,
-    required String password,
-    String? studentId,
-  }) async {
+  Future<Map<String, dynamic>> registerPassenger({required String name, required String email, required String password, String? studentId}) async {
     try {
       final response = await http.post(
         Uri.parse(ApiConfig.register),
@@ -103,7 +98,7 @@ class ApiService {
     }
   }
 
-  Future<List<dynamic>> getSchedules() async {
+  Future<Map<String, dynamic>> getSchedules() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('auth_token');
@@ -119,21 +114,21 @@ class ApiService {
       if (response.statusCode == 200) {
         final decodedData = json.decode(response.body);
 
-        // যেহেতু সরাসরি লিস্ট [ {}, {} ] আসছে, তাই একে টাইপ কাস্ট করে নিচ্ছি
-        if (decodedData is List) {
+        // 💡 এখন ম্যাপ আকারে [up_trips: [], down_trips: []] রিটার্ন হবে
+        if (decodedData is Map<String, dynamic>) {
           return decodedData;
         }
-        return [];
+        return {'up_trips': [], 'down_trips': []};
       } else {
         throw 'সার্ভার এরর কোড: ${response.statusCode}';
       }
     } catch (e) {
-      throw 'ডাটা লোড করতে সমস্যা হয়েছে: $e';
+      throw 'ডাটা লোড করতে সমস্যা হয়েছে: $e';
     }
   }
 
   // ৪. ড্রাইভারের ট্রিপ স্টার্ট করার মেথড
-  Future<Map<String, dynamic>> startTrip(int busId, int routeId) async {
+  Future<Map<String, dynamic>> startTrip(int busId, int routeId, String direction) async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('auth_token');
@@ -148,6 +143,7 @@ class ApiService {
         body: json.encode({
           'bus_id': busId,
           'route_id': routeId,
+          'direction': direction,
         }),
       );
 
@@ -279,6 +275,127 @@ class ApiService {
     } catch (e) {
       print("কারেন্ট একটিভ ট্রিপ এপিআই ত্রুটি: $e");
       return {'has_active_trip': false};
+    }
+  }
+
+  Future<Map<String, dynamic>?> getTripLiveDetails(int tripId) async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('auth_token');
+
+      // লারাভেলের এন্ডপয়েন্ট (যেমন: api/passenger/trip/12/details)
+      final response = await http.get(
+        Uri.parse(ApiConfig.trackBus(tripId)),
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+      return null;
+    } catch (e) {
+      print("লাইভ এপিআই ডাটা এরর: $e");
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> passengerCheckIn(int tripId) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('auth_token');
+
+      final Map<String, String> requestHeaders = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      };
+
+      final response = await http.post(
+        Uri.parse(ApiConfig.tripCheckIn(tripId)),
+        headers: requestHeaders,
+      );
+
+      final Map<String, dynamic> decodedResponse = json.decode(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {
+          'success': true,
+          'message': decodedResponse['message'] ?? 'চেক-ইন সফল হয়েছে।',
+          'is_overloaded': decodedResponse['is_overloaded'] ?? false, // 💡 ওভারলোড ফ্ল্যাগ পাস
+          'current_passengers': decodedResponse['current_passengers']
+        };
+      } else {
+        return {
+          'success': false,
+          'message': decodedResponse['message'] ?? 'চেক-ইন ব্যর্থ হয়েছে।'
+        };
+      }
+    } catch (e) {
+      print("🚨 passengerCheckIn মেথডে এরর: $e");
+      return {
+        'success': false,
+        'message': 'সার্ভারে কানেক্ট করা যাচ্ছে না।'
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>?> passengerCheckOut(int tripId) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('auth_token');
+
+      final Map<String, String> requestHeaders = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      };
+
+      final response = await http.post(
+        Uri.parse(ApiConfig.tripCheckOut(tripId)),
+        headers: requestHeaders,
+      );
+
+      final Map<String, dynamic> decodedResponse = json.decode(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {
+          'success': true,
+          'message': decodedResponse['message'] ?? 'চেক-আউট সফল হয়েছে।',
+          'current_passengers': decodedResponse['current_passengers']
+        };
+      } else {
+        return {
+          'success': false,
+          'message': decodedResponse['message'] ?? 'চেক-আউট ব্যর্থ হয়েছে।'
+        };
+      }
+    } catch (e) {
+      print("🚨 passengerCheckOut মেথডে এরর: $e");
+      return {
+        'success': false,
+        'message': 'সার্ভারে কানেক্ট করা যাচ্ছে না।'
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>?> getPassengerTripStatus(int tripId) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('auth_token');
+
+      final response = await http.get(
+        Uri.parse(ApiConfig.tripStatus(tripId)),
+        headers: {
+          'Accept': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      );
+      return json.decode(response.body);
+    } catch (e) {
+      return null;
     }
   }
 }

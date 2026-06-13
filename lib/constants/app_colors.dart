@@ -8,4 +8,5 @@ class AppColors {
   static const Color textGrey = Color(0xFF6C757D);
   static const Color success = Color(0xFF28A745);
   static const Color danger = Color(0xFFDC3545);
+  static const Color textMuted = Color(0xFF6C757D);
 }

@@ -39,4 +39,10 @@ class ApiConfig {
   static String tripCheckIn(int tripId) {
     return "$baseUrl/passenger/trip/$tripId/check-in";
   }
+  static String tripCheckOut(int tripId) {
+    return "$baseUrl/passenger/trip/$tripId/check-out";
+  }
+
+  static String tripStatus(int tripId) => "$baseUrl/passenger/trip/$tripId/status";
+
 }

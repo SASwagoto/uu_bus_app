@@ -7,9 +7,11 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../constants/app_colors.dart';
 import '../../services/api_service.dart';
+import '../../services/location_service.dart'; // 💡 গ্লোবাল লোকেশন সার্ভিস ইম্পোর্ট করা হলো
 
 class ActiveTripPage extends StatefulWidget {
-  const ActiveTripPage({super.key});
+  final int tripId;
+  const ActiveTripPage({super.key, this.tripId = 0});
 
   @override
   State<ActiveTripPage> createState() => _ActiveTripPageState();
@@ -19,11 +21,10 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
   final ApiService _apiService = ApiService();
   final MapController _mapController = MapController();
 
-  Position? _currentPosition;
-  Timer? _locationTimer;
-  int _tripId = 0; // 💡 মেইন ট্রিপ আইডি ভ্যারিয়েবল
+  Timer? _uiRefreshTimer; // 💡 শুধুমাত্র ম্যাপের ভেতরের নিজের মার্কার সরানোর জন্য টাইমার
+  int _tripId = 0;
   bool _isEnding = false;
-  bool _isLoadingTrip = true; // ট্রিপ আইডি লোড হওয়া পর্যন্ত ওয়েট করার জন্য
+  bool _isLoadingTrip = true;
 
   // ডিফল্ট পজিশন: উত্তরা ইউনিভার্সিটি ক্যাম্পাস
   LatLng _mapCenter = const LatLng(23.8738, 90.3807);
@@ -31,15 +32,14 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // ড্যাশবোর্ড থেকে পুশ হয়ে আসলে আইডি রিসিভ করার চেষ্টা
     final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
     if (args != null && args['trip_id'] != null) {
       setState(() {
         _tripId = args['trip_id'];
         _isLoadingTrip = false;
       });
+      _saveTripStateToLocal(_tripId); // 💡 আইডি পাওয়ার সাথে সাথে লোকাল স্টেটে লক করা
     } else {
-      // 💡 যদি আইডি আর্গুমেন্টসে না পাওয়া যায় (যেমন: ডিরেক্ট রিডাইরেক্ট), তবে লারাভেল থেকে আইডি টেনে আনা হবে
       _fetchActiveTripFromBackend();
     }
   }
@@ -50,20 +50,31 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
     _checkLocationPermissionAndStart();
   }
 
-  // 💡 লারাভেল ব্যাকএন্ড থেকে কারেন্ট একটিভ ট্রিপের সঠিক আইডি লোড করার ফুলপ্রুফ মেথড
+  // 💡 ট্রিপ আইডি লোকাল স্টোরেজে সেট করা যাতে সেন্ট্রাল সার্ভিস ব্যাকগ্রাউন্ডেও ট্র্যাক করতে পারে
+  Future<void> _saveTripStateToLocal(int id) async {
+    if (id == 0) return;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_trip_active', true);
+    await prefs.setInt('active_trip_id', id);
+
+    // 🚀 গ্লোবাল সেন্ট্রাল লোকেশন সার্ভিসকে এক্টিভেট বা সিঙ্ক করে দেওয়া
+    LocationService().startGlobalTracking();
+    print("💾 [লোকাল স্টোরেজ] ট্রিপ আইডি #$id লক করা হয়েছে এবং গ্লোবাল সার্ভিস ট্রিগারড।");
+  }
+
   Future<void> _fetchActiveTripFromBackend() async {
     try {
-      // আপনার এপিআই সার্ভিসের কারেন্ট একটিভ ট্রিপ মেথডটি কল করা হচ্ছে
       final response = await _apiService.getCurrentDriverActiveTrip();
       if (response != null && response['has_active_trip'] == true) {
         setState(() {
-          _tripId = response['trip']['id']; // ডাটাবেজ থেকে আসল আইডি সেভ হলো
+          _tripId = response['trip']['id'];
           _isLoadingTrip = false;
         });
+        _saveTripStateToLocal(_tripId); // 💡 ব্যাকএন্ড থেকে আইডি উদ্ধার করে লোকালে লক করা
         print("🎯 ব্যাকএন্ড থেকে উদ্ধারকৃত আসল ট্রিপ আইডি: $_tripId");
       } else {
         setState(() => _isLoadingTrip = false);
-        _showSnackBar('কোনো সচল ট্রিপ খুঁজে পাওয়া যায়নি!', AppColors.danger);
+        _showSnackBar('কোনো সচল ট্রিপ খুঁজে পাওয়া যায়নি!', AppColors.danger);
       }
     } catch (e) {
       setState(() => _isLoadingTrip = false);
@@ -77,7 +88,7 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
 
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      _showSnackBar('দয়া করে ফোনের GPS লোকেশন অন করুন।', AppColors.danger);
+      _showSnackBar('দয়া করে ফোনের GPS লোকেশন অন করুন।', AppColors.danger);
       return;
     }
 
@@ -91,24 +102,25 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
     }
 
     if (permission == LocationPermission.deniedForever) {
-      _showSnackBar('লোকেশন পারমিশন ব্লকেড। সেটিংসে গিয়ে অন করুন।', AppColors.danger);
+      _showSnackBar('লোকেশন পারমিশন ব্লকেড। সেটিংসে গিয়ে অন করুন।', AppColors.danger);
       return;
     }
 
-    // প্রথমবার ইনস্ট্যান্ট কারেন্ট লোকেশন পাঠানো
-    _getAndSendCurrentLocation();
+    // প্রথমবার স্ক্রিন ওপেন হওয়ার সাথে সাথে নিজের ম্যাপের পজিশন সেট করা
+    _getAndUpdateUiLocation();
 
-    // ⏱️ প্রতি ২০ সেকেন্ড পর পর ব্যাকএন্ডে লোকেশন পাঠানো এবং ম্যাপ আপডেট করা
-    _locationTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
-      _getAndSendCurrentLocation();
+    // ⏱️ 💡 মডারেট UI রিফ্রেশ টাইমার (সার্ভারে রিকোয়েস্ট পাঠাবে না, শুধু নিজের চোখের সামনে স্ক্রিনের ম্যাপ মার্কার আপডেট করবে)
+    _uiRefreshTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      _getAndUpdateUiLocation();
     });
   }
 
-  Future<void> _getAndSendCurrentLocation() async {
+  // 💡 শুধুমাত্র ফ্রন্টএন্ড ম্যাপ রিফ্রেশ করার মেথড (নো এপিআই হিট)
+  Future<void> _getAndUpdateUiLocation() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 5),
+        timeLimit: const Duration(seconds: 4),
       );
 
       if (!mounted) return;
@@ -116,38 +128,24 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
       LatLng newLocation = LatLng(position.latitude, position.longitude);
 
       setState(() {
-        _currentPosition = position;
         _mapCenter = newLocation;
       });
 
       _mapController.move(newLocation, 16.0);
-
-      // 🚀 লারাভেল ব্যাকএন্ডে সঠিক আইডিতে লাইভ লোকেশন পুশ করা
-      if (_tripId != 0) {
-        await _apiService.updateDriverLocation(
-          tripId: _tripId,
-          lat: position.latitude,
-          lng: position.longitude,
-        );
-        print("🚀 [সফল] ২০ সেকেন্ডের লাইভ লোকেশন সেন্ট -> Trip ID: $_tripId | Lat: ${position.latitude}, Lng: ${position.longitude}");
-      }
+      print("🗺️ [UI ম্যাপ রিফ্রেশ] ড্রাইভারের স্ক্রিন ক্যামেরা মুভড -> Lat: ${position.latitude}");
     } catch (e) {
-      print("লোকেশন মেথড এরর: $e");
+      print("UI লোকেশন রিফ্রেশ এরর: $e");
     }
   }
 
-  // 💡 আপনার কাঙ্ক্ষিত সম্পূর্ণ সলভড এন্ড ট্রিপ মেথড
   void _handleEndTrip() async {
     if (_tripId == 0) {
-      _showSnackBar('ত্রুটি: কোনো বৈধ ট্রিপ আইডি পাওয়া যায়নি!', AppColors.danger);
+      _showSnackBar('ত্রুটি: কোনো বৈধ ট্রিপ আইডি পাওয়া যায়নি!', AppColors.danger);
       return;
     }
 
-    print("🔴 ফ্লাটার থেকে এই ট্রিপ আইডিটি এন্ড করার চেষ্টা করা হচ্ছে: $_tripId");
-
     setState(() => _isEnding = true);
 
-    // এপিআই সার্ভিসকে সঠিক আইডি পাঠানো হলো
     Map<String, dynamic> result = await _apiService.endTrip(_tripId);
 
     setState(() => _isEnding = false);
@@ -157,16 +155,17 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
       await prefs.remove('is_trip_active');
       await prefs.remove('active_trip_id');
 
-      _locationTimer?.cancel(); // টাইমার স্টপ করা হলো
+      // 🛑 গ্লোবাল ট্র্যাকিং সার্ভিস এবং লোকাল UI টাইমার বন্ধ করা
+      LocationService().stopGlobalTracking();
+      _uiRefreshTimer?.cancel();
 
       if (mounted) {
-        _showSnackBar('ট্রিপ সফলভাবে সমাপ্ত হয়েছে।', AppColors.success);
-        // ট্রিপ শেষে ড্রাইভার ড্যাশবোর্ডে ব্যাক করা হলো
+        _showSnackBar('ট্রিপ সফলভাবে সমাপ্ত হয়েছে।', AppColors.success);
         Navigator.pushReplacementNamed(context, '/driver_dashboard');
       }
     } else {
       if (mounted) {
-        _showSnackBar(result['message'] ?? 'ট্রিপ শেষ করা যায়নি।', AppColors.danger);
+        _showSnackBar(result['message'] ?? 'ট্রিপ শেষ করা যায়নি।', AppColors.danger);
       }
     }
   }
@@ -179,7 +178,7 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
 
   @override
   void dispose() {
-    _locationTimer?.cancel();
+    _uiRefreshTimer?.cancel(); // লোকাল UI টাইমার ডিসপোজ
     super.dispose();
   }
 
@@ -187,26 +186,23 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('রানিং ট্রিপ ট্র্যাকিং (Free Map)', style: TextStyle(color: Colors.white, fontSize: 18)),
-        backgroundColor: AppColors.accent,
+        title: const Text('রানিং ট্রিপ ট্র্যাকিং (ফ্রি ম্যাপ)', style: TextStyle(color: Colors.white, fontSize: 18)),
+        backgroundColor: AppColors.primary,
         automaticallyImplyLeading: false,
       ),
       body: Stack(
         children: [
-          // 🗺️ ওপেন-স্ট্রিট-ম্যাপ উইজেট
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
               initialCenter: _mapCenter,
-              initialZoom: 15.0,
+              initialZoom: 15.5,
             ),
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.uttarauniversity.uu_bus_app',
               ),
-
-              // 📍 কাস্টম আকর্ষণীয় বাস মার্কার লেয়ার
               MarkerLayer(
                 markers: [
                   Marker(
@@ -219,10 +215,7 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
                         Container(
                           width: 55,
                           height: 55,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.orange.withOpacity(0.3),
-                          ),
+                          decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.orange.withOpacity(0.3)),
                         ),
                         Container(
                           width: 44,
@@ -230,20 +223,10 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
                           decoration: const BoxDecoration(
                             shape: BoxShape.circle,
                             color: Colors.white,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black26,
-                                blurRadius: 6,
-                                offset: Offset(0, 3),
-                              )
-                            ],
+                            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 3))],
                           ),
                         ),
-                        const Icon(
-                          Icons.directions_bus_rounded,
-                          color: Colors.orange,
-                          size: 32,
-                        ),
+                        const Icon(Icons.directions_bus_rounded, color: Colors.orange, size: 32),
                       ],
                     ),
                   ),
@@ -252,7 +235,7 @@ class _ActiveTripPageState extends State<ActiveTripPage> {
             ],
           ),
 
-          // নিচে কন্ট্রোল প্যানেল এবং এন্ড বাটন
+          // নিচে কন্ট্রোল প্যানেল
           Positioned(
             bottom: 0,
             left: 0,

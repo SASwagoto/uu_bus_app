@@ -1,3 +1,4 @@
+// main.dart
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'constants/app_colors.dart';
@@ -7,6 +8,7 @@ import 'views/auth/passenger_register_page.dart';
 import 'views/driver/driver_dashboard.dart';
 import 'views/driver/active_trip_page.dart';
 import 'views/passenger/passenger_dashboard.dart';
+import 'views/passenger/passenger_track_bus.dart'; // নতুন ম্যাপ পেজ ইমপোর্ট
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,14 +17,17 @@ void main() async {
   String? token = prefs.getString('auth_token');
   String? role = prefs.getString('user_role');
   bool isDriverRunningTrip = prefs.getBool('is_trip_active') ?? false;
+  int activeTripId = prefs.getInt('active_trip_id') ?? 0; // মেমোরি থেকে ট্রিপ আইডি লোড
 
   // ডিফল্ট হোম স্ক্রিন নির্ধারণ লজিক
-  Widget initialRoute = const PassengerLoginPage(); // ডিফল্ট স্টার্ট পেজ
+  Widget initialRoute = const PassengerLoginPage();
 
   if (token != null) {
     if (role == 'driver') {
-      // ড্রাইভার যদি ট্রিপ এন্ড না করে অ্যাপ ক্লোজ করে দেয়, সে সরাসরি একটিভ ট্রিপ পেজে যাবে
-      initialRoute = isDriverRunningTrip ? const ActiveTripPage() : const DriverDashboard();
+      // ড্রাইভার সেশন রানিং থাকলে সরাসরি ট্রিপ আইডি সহ অ্যাক্টিভ পেজে রিডাইরেক্ট
+      initialRoute = isDriverRunningTrip
+          ? ActiveTripPage(tripId: activeTripId)
+          : const DriverDashboard();
     } else if (role == 'passenger') {
       initialRoute = const PassengerDashboard();
     }
@@ -43,7 +48,7 @@ class UUBusApp extends StatelessWidget {
       theme: ThemeData(
         primaryColor: AppColors.primary,
         scaffoldBackgroundColor: AppColors.background,
-        fontFamily: 'Roboto', // আপনার পছন্দের ফন্ট দিতে পারেন
+        fontFamily: 'Roboto',
         appBarTheme: const AppBarTheme(
           backgroundColor: AppColors.primary,
           elevation: 0,
@@ -52,13 +57,41 @@ class UUBusApp extends StatelessWidget {
         ),
       ),
       home: initialScreen,
+
+      // 💡 প্রফেশনাল এপ্রোচ: স্ট্যাটিক রাউটস (যেগুলোতে কোনো আর্গুমেন্ট পাস করতে হয় না)
       routes: {
         '/passenger_login': (context) => const PassengerLoginPage(),
         '/driver_login': (context) => const DriverLoginPage(),
         '/passenger_register': (context) => const PassengerRegisterPage(),
         '/driver_dashboard': (context) => const DriverDashboard(),
-        '/active_trip_page': (context) => const ActiveTripPage(),
         '/passenger_dashboard': (context) => const PassengerDashboard(),
+      },
+
+      // 💡 প্রফেশনাল এপ্রোচ: ডাইনামিক রাউটস হ্যান্ডেলার (যে পেজগুলোতে আইডি বা আর্গুমেন্ট পাস করতে হয়)
+      onGenerateRoute: (settings) {
+        // ১. ড্রাইভারের একটিভ ট্রিপ পেজ রাউট উইথ আর্গুমেন্ট
+        if (settings.name == '/active_trip_page') {
+          final args = settings.arguments as Map<String, dynamic>?;
+          final tripId = int.tryParse(args?['trip_id']?.toString() ?? '0') ?? 0;
+
+          return MaterialPageRoute(
+            builder: (context) => ActiveTripPage(tripId: tripId),
+            settings: settings,
+          );
+        }
+
+        // ২. প্যাসেঞ্জারের বাস ট্র্যাকিং ম্যাপ পেজ রাউট উইথ আর্গুমেন্ট
+        if (settings.name == '/passenger_track_bus') {
+          final args = settings.arguments as Map<String, dynamic>?;
+          final tripId = int.tryParse(args?['trip_id']?.toString() ?? '0') ?? 0;
+
+          return MaterialPageRoute(
+            builder: (context) => PassengerTrackBus(tripId: tripId),
+            settings: settings,
+          );
+        }
+
+        return null; // ডিফল্ট বা আননোন রাউটের ক্ষেত্রে সেফটি ফলব্যাক
       },
     );
   }

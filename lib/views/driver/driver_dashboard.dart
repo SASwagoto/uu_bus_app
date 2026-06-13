@@ -1,4 +1,3 @@
-// lib/views/driver/driver_dashboard.dart
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../constants/app_colors.dart';
@@ -15,7 +14,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
   final ApiService _apiService = ApiService();
 
   String _driverName = "ড্রাইভার";
-  List<dynamic> _schedules = [];
+
+  // 💡 ডাটা স্ট্রাকচার পরিবর্তন করে ম্যাপ এর ভেতর ২টি আলাদা লিস্ট রাখা হলো
+  List<dynamic> _upSchedules = [];
+  List<dynamic> _downSchedules = [];
+
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -23,7 +26,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   void initState() {
     super.initState();
     _loadDriverName();
-    _checkActiveTripAndFetchSchedules(); // 💡 নতুন মেথড কল
+    _checkActiveTripAndFetchSchedules();
   }
 
   void _loadDriverName() async {
@@ -37,21 +40,18 @@ class _DriverDashboardState extends State<DriverDashboard> {
     try {
       setState(() => _isLoading = true);
 
-      // ১. সরাসরি লারাভেল ব্যাকএন্ড সার্ভার থেকে চেক করা এই ড্রাইভারের কোনো ট্রিপ রানিং আছে কি না
       Map<String, dynamic> activeTripStatus = await _apiService.getCurrentDriverActiveTrip();
 
       if (activeTripStatus['has_active_trip'] == true && activeTripStatus['trip'] != null) {
         var tripData = activeTripStatus['trip'];
         int activeTripId = int.tryParse(tripData['id']?.toString() ?? '0') ?? 0;
 
-        // লোকাল মেমোরিতেও স্টেট আপডেট করে রাখা ব্যাকআপ হিসেবে
         SharedPreferences prefs = await SharedPreferences.getInstance();
         await prefs.setBool('is_trip_active', true);
         await prefs.setInt('active_trip_id', activeTripId);
 
         if (mounted) {
           setState(() => _isLoading = false);
-          // 🚀 ডিভাইস নতুন হলেও ড্রাইভার সরাসরি ম্যাপ ওয়ালা একটিভ ট্রিপ পেজে চলে যাবে
           Navigator.pushReplacementNamed(
             context,
             '/active_trip_page',
@@ -64,7 +64,6 @@ class _DriverDashboardState extends State<DriverDashboard> {
       print("সার্ভার একটিভ ট্রিপ সিঙ্কিং ত্রুটি: $e");
     }
 
-    // কোনো একটিভ ট্রিপ না থাকলে স্বাভাবিকভাবে আজকের শিডিউল লিস্ট লোড হবে
     _fetchSchedules();
   }
 
@@ -83,10 +82,12 @@ class _DriverDashboardState extends State<DriverDashboard> {
         _errorMessage = null;
       });
 
-      List<dynamic> data = await _apiService.getSchedules();
+      // 💡 এপিআই সার্ভিস থেকে এখন Map ডাটা আসবে
+      Map<String, dynamic> data = await _apiService.getSchedules();
 
       setState(() {
-        _schedules = data;
+        _upSchedules = data['up_trips'] ?? [];
+        _downSchedules = data['down_trips'] ?? [];
         _isLoading = false;
       });
     } catch (e) {
@@ -97,14 +98,16 @@ class _DriverDashboardState extends State<DriverDashboard> {
     }
   }
 
-  void _handleStartTrip(int busId, int routeId) async {
+  // 💡 রিকুয়েস্টে direction (up/down) প্যারামিটার যুক্ত করা হলো
+  void _handleStartTrip(int busId, int routeId, String direction) async {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
 
-    Map<String, dynamic> result = await _apiService.startTrip(busId, routeId);
+    // 💡 আপনার apiService.startTrip মেথডে ৩টি আর্গুমেন্ট পাস করতে হবে
+    Map<String, dynamic> result = await _apiService.startTrip(busId, routeId, direction);
 
     if (mounted) Navigator.pop(context);
 
@@ -126,7 +129,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['message'] ?? 'ট্রিপ শুরু করতে সমস্যা হয়েছে'),
+            content: Text(result['message'] ?? 'ট্রিপ শুরু করতে সমস্যা হয়েছে'),
             backgroundColor: AppColors.danger,
           ),
         );
@@ -136,23 +139,37 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        title: Text('স্বাগতম, $_driverName', style: const TextStyle(color: Colors.white, fontSize: 18)),
-        backgroundColor: AppColors.accent,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: _logout,
+    // 💡 ২টা ট্যাবের জন্য DefaultTabController অ্যাড করা হলো
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: Colors.grey[100],
+        appBar: AppBar(
+          title: Text('স্বাগতম, $_driverName', style: const TextStyle(color: Colors.white, fontSize: 18)),
+          backgroundColor: AppColors.primary,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.logout, color: Colors.white),
+              onPressed: _logout,
+            ),
+            const SizedBox(width: 8),
+          ],
+          // 💡 ড্রাইভারের জন্য সুন্দর ট্যাব বার হেডার
+          bottom: const TabBar(
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
+            indicatorColor: Colors.white,
+            tabs: [
+              Tab(icon: Icon(Icons.login_rounded), text: 'ক্যাম্পাসমুখী (Up)'),
+              Tab(icon: Icon(Icons.logout_rounded), text: 'ক্যাম্পাস হতে (Down)'),
+            ],
           ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _fetchSchedules,
-        color: AppColors.accent,
-        child: _buildBodyContent(),
+        ),
+        body: RefreshIndicator(
+          onRefresh: _fetchSchedules,
+          color: AppColors.accent,
+          child: _buildBodyContent(),
+        ),
       ),
     );
   }
@@ -189,26 +206,44 @@ class _DriverDashboardState extends State<DriverDashboard> {
       );
     }
 
-    if (_schedules.isEmpty) {
-      return const Center(
-        child: Text(
-          'আজ আপনার কোনো শিডিউল নেই!',
-          style: TextStyle(fontSize: 16, color: AppColors.textGrey, fontWeight: FontWeight.w500),
+    // 💡 ট্যাব ভিউ রিটার্ন করা হচ্ছে যা সুইপ করলে ডাইনামিক লিস্ট দেখাবে
+    return TabBarView(
+      children: [
+        _buildScheduleListView(_upSchedules, 'up'),
+        _buildScheduleListView(_downSchedules, 'down'),
+      ],
+    );
+  }
+
+  // 💡 কোড রিইউজেবিলিটি বাড়ানোর জন্য জেনেরিক লিস্ট ভিউ মেথড
+  Widget _buildScheduleListView(List<dynamic> schedules, String direction) {
+    if (schedules.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.calendar_today_outlined, size: 40, color: Colors.grey[300]),
+            const SizedBox(height: 8),
+            Text(
+              direction == 'up' ? 'আজ সকালে কোনো Up শিডিউল নেই!' : 'আজ বিকেলে কোনো Down শিডিউল নেই!',
+              style: const TextStyle(fontSize: 15, color: AppColors.textGrey),
+            ),
+          ],
         ),
       );
     }
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _schedules.length,
+      itemCount: schedules.length,
       itemBuilder: (context, index) {
-        return _buildScheduleCard(_schedules[index]);
+        return _buildScheduleCard(schedules[index], direction);
       },
     );
   }
 
-  Widget _buildScheduleCard(dynamic schedule) {
-    // 💡 লারাভেলের জেসন অবজেক্ট সেফলি রিড করা হচ্ছে
+  // 💡 কার্ডের ভেতর direction পাস করা হলো যেন বাটনে ক্লিক করলে সঠিক ডিরেকশন ট্রিপ শুরু হয়
+  Widget _buildScheduleCard(dynamic schedule, String direction) {
     var busData = schedule['bus'];
     var routeData = schedule['route'];
 
@@ -217,7 +252,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
     String routeName = (routeData != null) ? (routeData['route_name']?.toString() ?? 'অজানা রুট') : 'অজানা রুট';
     String departureTime = schedule['departure_time']?.toString() ?? '--:--';
 
-    // সেফ আইডি পার্সিং (String থেকে Int এরর যেন না আসে)
+    // ফর্ম্যাটকে ৫ ক্যারেক্টারে রাখা (যেমন: ১২:৩০:০০ থেকে ১২:৩০ করা)
+    if (departureTime.length > 5) {
+      departureTime = departureTime.substring(0, 5);
+    }
+
     int busId = int.tryParse(schedule['bus_id']?.toString() ?? '0') ?? 0;
     int routeId = int.tryParse(schedule['route_id']?.toString() ?? '0') ?? 0;
 
@@ -266,13 +305,14 @@ class _DriverDashboardState extends State<DriverDashboard> {
               height: 48,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
+                  backgroundColor: direction == 'up' ? Colors.blue[700] : Colors.purple[700], // ডিরেকশন অনুযায়ী আলাদা ভাইব
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                onPressed: () => _handleStartTrip(busId, routeId),
-                child: const Text(
-                  'ট্রিপ শুরু করুন',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                // 💡 এখানে direction পাস হচ্ছে ব্যাকএন্ডের জন্য
+                onPressed: () => _handleStartTrip(busId, routeId, direction),
+                child: Text(
+                  direction == 'up' ? 'Up ট্রিপ শুরু করুন 🚀' : 'Down ট্রিপ শুরু করুন 🏁',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                 ),
               ),
             ),
